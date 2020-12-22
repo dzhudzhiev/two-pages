@@ -1,7 +1,10 @@
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { YMaps, Map, Placemark } from 'react-yandex-maps';
+import Autosuggest from 'react-autosuggest';
+import debounce from 'lodash.debounce';
 import styled from 'styled-components';
 import Header from '../components/Header';
+import './Weather.css';
 
 const Container = styled.div`
   min-height: 400px;
@@ -55,18 +58,74 @@ const api = {
   base: 'https://api.openweathermap.org/data/2.5/'
 };
 
-function Weather() {
-  const [query, setQuery] = useState('');
-  const [weather, setWeather] = useState({});
+function getSuggestionValue(suggestion) {
+  return suggestion.name;
+}
 
-  const search = event => {
-    if (event.key === 'Enter') {
-      fetch(
-        `${api.base}weather?q=${query}&units=metric&lang=ru&APPID=${api.key}`
-      )
-        .then(res => res.json())
-        .then(result => setWeather(result));
-    }
+function renderSuggestion(suggestion) {
+  return <span>{suggestion.name}</span>;
+}
+
+function Weather() {
+  const [weather, setWeather] = useState({});
+  const [value, setValue] = useState('');
+  const [suggestions, setSuggestions] = useState([]);
+
+  // eslint-disable-next-line
+  const loadSuggestions = useCallback(
+    debounce(async searchText => {
+      const result = await fetch(
+        'https://places-dsn.algolia.net/1/places/query',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Algolia-Application-Id': 'pl0SOC6TFYAY',
+            'X-Algolia-API-Key': 'ef7ccda39f37f5c60bc6e0bfdd82eff7'
+          },
+          body: JSON.stringify({
+            query: searchText,
+            type: 'city',
+            language: 'ru',
+            hitsPerPage: 5
+          })
+        }
+      ).then(res => res.json());
+
+      setSuggestions(
+        result.hits.map(({ locale_names, _geoloc }) => ({
+          name: locale_names[0],
+          lat: _geoloc.lat,
+          lng: _geoloc.lng
+        }))
+      );
+    }, 1000),
+    []
+  );
+
+  const onChange = (event, { newValue }) => {
+    setValue(newValue);
+  };
+
+  const onSuggestionsFetchRequested = ({ value }) => {
+    loadSuggestions(value);
+  };
+
+  const onSuggestionsClearRequested = () => {
+    setSuggestions([]);
+  };
+
+  const inputProps = {
+    placeholder: 'Введите город',
+    value,
+    onChange
+  };
+
+  const getWeather = async (lat, lon) => {
+    const result = await fetch(
+      `${api.base}weather?lat=${lat}&lon=${lon}&units=metric&appid=${api.key}`
+    ).then(res => res.json());
+    setWeather(result);
   };
 
   return (
@@ -74,14 +133,20 @@ function Weather() {
       <Header dest={{ to: '/', label: 'To The List' }} />
       <Container>
         <div className="search-box">
-          <input
-            type="text"
-            className="search-box__input"
-            placeholder="Search..."
-            onChange={e => setQuery(e.target.value)}
-            value={query}
-            onKeyPress={search}
-          />
+          <div>
+            <Autosuggest
+              suggestions={suggestions}
+              onSuggestionsFetchRequested={onSuggestionsFetchRequested}
+              onSuggestionsClearRequested={onSuggestionsClearRequested}
+              getSuggestionValue={getSuggestionValue}
+              renderSuggestion={renderSuggestion}
+              onSuggestionSelected={(event, { suggestion }) => {
+                const { lat, lng } = suggestion;
+                getWeather(lat, lng);
+              }}
+              inputProps={inputProps}
+            />
+          </div>
         </div>
         {weather.main !== undefined && (
           <div className="location">
@@ -113,10 +178,10 @@ function Weather() {
                         .then(res => res.json())
                         .then(result => {
                           setWeather(result);
-                          setQuery(name);
+                          setValue(name);
                         });
                     } else {
-                      setQuery('');
+                      setValue('');
                     }
                   }}
                 >
